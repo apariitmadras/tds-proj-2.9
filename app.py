@@ -10,8 +10,6 @@ from pathlib import Path
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import json
-from fastapi.responses import Response
 
 # Gemini (new SDK)
 from google import genai
@@ -37,6 +35,7 @@ PLAN_FILE = OUTPUTS / "abdul_breaked_task.txt"
 PROMPT_FILE = ROOT / "prompts" / "abdul_task_breakdown.txt"
 
 
+
 def _load_planner_prompt() -> str:
     if PROMPT_FILE.exists():
         return PROMPT_FILE.read_text(encoding="utf-8")
@@ -50,14 +49,19 @@ def plan_with_gemini(task_text: str) -> str:
     client = genai.Client(api_key=api_key)
     prompt_text = _load_planner_prompt()
 
-    # Compose contents: QUESTION then prompt
     resp = client.models.generate_content(
         model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash-lite"),
         contents=[task_text, prompt_text],
     )
 
+    # 1) Save the plan
     plan = (resp.text or "").strip()
     PLAN_FILE.write_text(plan, encoding="utf-8")
+
+    # 2) Immediately read it back and print to logs
+    plan_text = PLAN_FILE.read_text(encoding="utf-8")
+    print("💡 Generated plan (outputs/abdul_breaked_task.txt):\n", plan_text)
+
     return plan
 
 
@@ -69,18 +73,6 @@ def health():
         "has_executor_key": bool(os.getenv("OPENAI_API_KEY")),
     }
 
-from fastapi.responses import Response
-from fastapi import HTTPException
-
-@app.get("/api/plan")
-def show_plan():
-    """
-    Return the raw Gemini plan exactly as written to abdul_breaked_task.txt.
-    """
-    if not PLAN_FILE.exists():
-        raise HTTPException(status_code=404, detail="Plan file not found")
-    plan_text = PLAN_FILE.read_text(encoding="utf-8")
-    return Response(content=plan_text, media_type="application/json")
 
 async def _handle_upload(file: UploadFile) -> JSONResponse:
     if not file:
@@ -112,9 +104,8 @@ async def _handle_upload(file: UploadFile) -> JSONResponse:
         raise HTTPException(status_code=500, detail=f"Executor failed: {e}")
 
     # 3) Return EXACTLY the JSON array (no wrapper object)
-    plan_text = PLAN_FILE.read_text(encoding="utf-8")
-    combined = plan_text.strip() + "\n" + json.dumps(final_answer, ensure_ascii=False)
-    return Response(content=combined, media_type="text/plain")
+    return JSONResponse(content=final_answer)
+
 
 @app.post("/api/")
 @app.post("/api/analyze")
