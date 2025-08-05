@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+env/
+venv/
+
+# OS junk
+.DS_Store
+
+# Env files
+.env
+.env.*
+
+# Runtime artifacts (keep folder but not contents)
+outputs/*
+!outputs/.gitkeep
