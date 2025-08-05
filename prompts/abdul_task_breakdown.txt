@@ -9,52 +9,13 @@ Context
   - get_relevant_data(file_name, js_selector)
   - answer_questions(code)   # runs Python that must print ONLY the final JSON array
 
-Your Output FORMAT (MANDATORY)
-Return a single fenced code block with a JSON object using this schema:
+Your Output FORMAT (MANDATORY):
+- The response should include:
+- Clearly defined variables for parameters extracted from the question.
+- The expected output type (e.g., JSON array, image data URI).
 
-{
-  "goal": "Single sentence restatement of the QUESTION",
-  "sources": [
-    {"url": "<primary url>", "reason": "why this source"}
-  ],
-  "selectors": [
-    {"for": "main table or list you need", "css": "main#content table.wikitable"}
-  ],
-  "extraction_plan": [
-    "Use scrape_website(url, 'outputs/scraped_content.html')",
-    "Use get_relevant_data('outputs/scraped_content.html', '<css>') to pull the required text/rows"
-  ],
-  "data_schema": {
-    "columns": ["Rank", "Peak", "Title", "Worldwide gross", "Year"],
-    "cleaning": [
-      "Remove currency symbols and commas from money columns",
-      "Cast Year to int; drop footnote markers like [# 1]"
-    ]
-  },
-  "analysis": [
-    "List each calculation explicitly, e.g., 'count movies >= $2B released before 2020'",
-    "If correlation is requested, specify pairs and method (Pearson)",
-    "If a plot is requested, specify axes, styling, and PNG output under 100kB"
-  ],
-  "python_code_requirements": [
-    "Use pandas and matplotlib",
-    "Code MUST end by printing ONLY the final JSON array as text",
-    "If plot required, encode PNG as base64 data URI under 100,000 bytes"
-  ],
-  "output_contract": {
-    "shape": "JSON array only; no prose",
-    "example": "[1, \"Titanic\", 0.485782, \"data:image/png;base64,...\"]",
-    "order": "Match the order the QUESTION asks for"
-  },
-  "time_budget_seconds": 150,
-  "failure_checks": [
-    "If selector returns 0 elements, try a fallback selector (e.g., 'table.wikitable')",
-    "Verify row counts > 0 before computing",
-    "If parsing fails, strip non-breaking spaces and footnotes"
-  ]
-}
-
+Tone: Formal and technical.
 Rules
 - Be specific and minimal. Prefer stable CSS like 'main#content table.wikitable' for Wikipedia.
 - Never invent data; only plan how to obtain it.
-- Do not include any commentary outside the single JSON code block.
+- Do not include any commentary outside the output format
