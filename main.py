@@ -16,25 +16,49 @@ import time
 import asyncio
 import subprocess
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 
 import httpx
 from bs4 import BeautifulSoup
-from tools.scrape_website import scrape_website  # senior-style import
-from tools.get_relevant_data import get_relevant_data  # senior-style import
+from tools.scrape_website import scrape_website
+from tools.get_relevant_data import get_relevant_data
 
-ROOT = Path(__file__).parent.resolve()
+# Paths for runtime artifacts
+down = Path(__file__).parent.resolve()
+ROOT = down
 OUTPUTS = ROOT / "outputs"
 OUTPUTS.mkdir(parents=True, exist_ok=True)
 
+# Where raw LLM JSON and temp scripts live
 GPT_RESP_PATH = OUTPUTS / "gpt_response.json"
 TEMP_SCRIPT_PATH = OUTPUTS / "temp_script.py"
+
+# New: system prompt loaded from file
+EXECUTOR_PROMPT_FILE = ROOT / "prompts" / "executor.txt"
+
+def _load_executor_prompt() -> str:
+    """
+    Load the system prompt for the execution agent from prompts/executor.txt
+    """
+    if EXECUTOR_PROMPT_FILE.exists():
+        return EXECUTOR_PROMPT_FILE.read_text(encoding="utf-8")
+    # Fallback if missing
+    return (
+        "You are an execution agent. Use tools to: (1) fetch the target page, "
+        "(2) extract the necessary data, (3) when ready, generate complete Python code and call 'answer_questions' with it. "
+        "The code MUST print ONLY the final JSON array required by the task. "
+        "Do not include explanations—return only the JSON array."
+    )
+
+
+def _system_prompt() -> str:
+    return _load_executor_prompt()
 
 
 async def answer_questions(code: str) -> str:
     """
-    Write provided Python code and run it. The code MUST print ONLY the final JSON array.
-    Returns stdout (should be JSON array string).
+    Write provided Python code to a temp file and run it. Must print ONLY JSON array.
+    Returns stdout (JSON array string).
     """
     TEMP_SCRIPT_PATH.write_text(code, encoding="utf-8")
 
@@ -46,13 +70,11 @@ async def answer_questions(code: str) -> str:
     )
 
     if proc.returncode != 0 and not proc.stdout.strip():
-        # Surface stderr to the model (tool output)
         return json.dumps({"error": "code_failed", "stderr": proc.stderr})
-
     return proc.stdout
 
 
-# Tools schema advertised to the model
+# Tools schema for OpenAI function-calling
 tools: List[Dict[str, Any]] = [
     {
         "type": "function",
@@ -62,11 +84,8 @@ tools: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "url": {"type": "string", "description": "URL to scrape"},
-                    "output_file": {
-                        "type": "string",
-                        "description": "Path to save HTML (e.g., outputs/scraped_content.html)",
-                    },
+                    "url": {"type": "string"},
+                    "output_file": {"type": "string"},
                 },
                 "required": ["url", "output_file"],
                 "additionalProperties": False,
@@ -78,12 +97,12 @@ tools: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_relevant_data",
-            "description": "Extract text from a saved HTML file using a CSS selector.",
+            "description": "Extract text from saved HTML using a CSS selector.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "file_name": {"type": "string", "description": "HTML file path"},
-                    "js_selector": {"type": "string", "description": "CSS selector for elements to extract"},
+                    "file_name": {"type": "string"},
+                    "js_selector": {"type": "string"},
                 },
                 "required": ["file_name", "js_selector"],
                 "additionalProperties": False,
@@ -95,12 +114,10 @@ tools: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "answer_questions",
-            "description": "Runs provided Python code that computes the final answers/plot and prints ONLY the JSON array.",
+            "description": "Runs provided Python code that prints ONLY the final JSON array.",
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "code": {"type": "string", "description": "Standalone Python code that prints the final JSON array."}
-                },
+                "properties": {"code": {"type": "string"}},
                 "required": ["code"],
                 "additionalProperties": False,
             },
@@ -110,20 +127,7 @@ tools: List[Dict[str, Any]] = [
 ]
 
 
-def _system_prompt() -> str:
-    return (
-        "You are an execution agent. Use tools to: (1) fetch the target page, "
-        "(2) extract the necessary data, (3) when ready, generate complete Python code and call "
-        "'answer_questions' with it. The code MUST print ONLY the final JSON array required by the task, "
-        "e.g., [1, \"Titanic\", 0.485782, \"data:image/png;base64,...\"]. "
-        "Do not include explanations in your final assistant message—return only the JSON array."
-    )
-
-
 def _chat(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    One chat turn against OpenAI Chat Completions with tools enabled.
-    """
     base = os.getenv("OPENAI_BASE", "https://api.openai.com").rstrip("/")
     token = os.getenv("OPENAI_API_KEY")
     if not token:
@@ -132,7 +136,8 @@ def _chat(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     url = f"{base}/v1/chat/completions"
     model = os.getenv("EXECUTOR_MODEL", "gpt-4o-mini")
 
-    with httpx.Client(timeout=1200) as client:
+    timeout = httpx.Timeout(165.0)
+    with httpx.Client(timeout=timeout) as client:
         r = client.post(
             url,
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
@@ -141,7 +146,7 @@ def _chat(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
         r.raise_for_status()
         data = r.json()
 
-    # Save raw for debugging
+    # save raw response for debugging
     try:
         GPT_RESP_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
@@ -176,40 +181,27 @@ async def _call_tool(name: str, args: Dict[str, Any]) -> str:
 
 
 async def run_agent_for_api(task: str, plan: str = "") -> list:
-    """
-    Runs the tool-calling loop until the model returns the final JSON array.
-    """
-    messages: List[Dict[str, Any]] = [
+    messages = [
         {"role": "system", "content": _system_prompt()},
-        {"role": "user", "content": f"{task}\n\nPlan:\n{plan}\n\nReturn ONLY the final JSON array."},
+        {"role": "user", "content": f"{task}\n\nPlan:\n{plan}\n\nReturn ONLY the JSON array."},
     ]
-
     start = time.time()
+    budget = int(os.getenv("TOOL_LOOP_BUDGET", "110"))
     while True:
-        if time.time() - start > int(os.getenv("TOOL_LOOP_BUDGET", "110")):
+        if time.time() - start > budget:
             raise TimeoutError("Tool loop exceeded time budget")
 
         msg = _chat(messages)
         tool_calls = msg.get("tool_calls") or []
-
         if not tool_calls:
             final_text = (msg.get("content") or "").strip()
-            try:
-                parsed = json.loads(final_text)
-                if not isinstance(parsed, list):
-                    raise ValueError("Final content is JSON but not a list")
-                return parsed
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Final assistant content was not valid JSON: {e}")
+            return json.loads(final_text)
 
-        # Append assistant turn that requested tools
+        # execute requested tools
         messages.append({"role": "assistant", "content": None, "tool_calls": tool_calls})
-
-        # Execute tools and return results back to the model
         for tc in tool_calls:
-            fn_name = tc["function"]["name"]
             args = _parse_args(tc["function"].get("arguments"))
-            out = await _call_tool(fn_name, args)
+            out = await _call_tool(tc["function"]["name"], args)
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": out})
 
 
