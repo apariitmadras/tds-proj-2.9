@@ -38,12 +38,7 @@ PROMPT_FILE = ROOT / "prompts" / "abdul_task_breakdown.txt"
 def _load_planner_prompt() -> str:
     if PROMPT_FILE.exists():
         return PROMPT_FILE.read_text(encoding="utf-8")
-    # Minimal fallback if prompt file is missing
-    return (
-        "Break the QUESTION into a precise, tool-ready plan (sources, selectors, cleaning, analysis, "
-        "and the final JSON-only output contract). Return a single JSON code block."
-    )
-
+    raise RuntimeError(f"Planner prompt missing at: {PROMPT_FILE}")
 
 def plan_with_gemini(task_text: str) -> str:
     api_key = os.getenv("GEMINI_API_KEY")
