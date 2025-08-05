@@ -69,22 +69,18 @@ def health():
         "has_executor_key": bool(os.getenv("OPENAI_API_KEY")),
     }
 
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from fastapi import HTTPException
 
 @app.get("/api/plan")
-def download_plan():
+def show_plan():
     """
-    Download the Gemini-generated plan file.
+    Return the raw Gemini plan exactly as written to abdul_breaked_task.txt.
     """
     if not PLAN_FILE.exists():
-        raise HTTPException(status_code=404, detail="Plan not found")
-    return FileResponse(
-        path=str(PLAN_FILE),
-        filename="abdul_breaked_task.txt",
-        media_type="text/plain",
-    )
-
+        raise HTTPException(status_code=404, detail="Plan file not found")
+    plan_text = PLAN_FILE.read_text(encoding="utf-8")
+    return Response(content=plan_text, media_type="application/json")
 
 async def _handle_upload(file: UploadFile) -> JSONResponse:
     if not file:
