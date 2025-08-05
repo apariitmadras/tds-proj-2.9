@@ -4,3 +4,4 @@ httpx
 beautifulsoup4
 playwright
 google-genai
+python-multipart
