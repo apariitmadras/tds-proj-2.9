@@ -132,7 +132,7 @@ def _chat(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     url = f"{base}/v1/chat/completions"
     model = os.getenv("EXECUTOR_MODEL", "gpt-4o-mini")
 
-    with httpx.Client(timeout=120) as client:
+    with httpx.Client(timeout=1200) as client:
         r = client.post(
             url,
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
