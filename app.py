@@ -1,22 +1,22 @@
 # app.py
 # FastAPI entrypoint (planner + glue): accepts questions.txt, calls Gemini to plan,
-# writes outputs/abdul_breaked_task.txt, invokes the executor, returns ONLY a JSON array.
+# writes outputs/abdul_breaked_task.txt, invokes the executor, returns planner output + JSON array.
 
 from __future__ import annotations
 
 import os
 import asyncio
+import json
 from pathlib import Path
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 # Gemini (new SDK)
 from google import genai
 
 # Executor
 from main import run_agent_for_api
-
 
 app = FastAPI(title="Data Analyst Agent (Planner→Executor)")
 app.add_middleware(
@@ -40,6 +40,7 @@ def _load_planner_prompt() -> str:
         return PROMPT_FILE.read_text(encoding="utf-8")
     raise RuntimeError(f"Planner prompt missing at: {PROMPT_FILE}")
 
+
 def plan_with_gemini(task_text: str) -> str:
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -48,7 +49,6 @@ def plan_with_gemini(task_text: str) -> str:
     client = genai.Client(api_key=api_key)
     prompt_text = _load_planner_prompt()
 
-    # Compose contents: QUESTION then prompt
     resp = client.models.generate_content(
         model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash-lite"),
         contents=[task_text, prompt_text],
@@ -68,7 +68,7 @@ def health():
     }
 
 
-async def _handle_upload(file: UploadFile) -> JSONResponse:
+async def _handle_upload(file: UploadFile) -> Response:
     if not file:
         raise HTTPException(status_code=400, detail="File is required")
 
@@ -81,7 +81,7 @@ async def _handle_upload(file: UploadFile) -> JSONResponse:
     if not text.strip():
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
-    # 1) Plan with Gemini → write outputs/abdul_breaked_task.txt (like senior’s repo)
+    # 1) Plan with Gemini → write outputs/abdul_breaked_task.txt
     try:
         plan = plan_with_gemini(text)
     except Exception as e:
@@ -97,8 +97,10 @@ async def _handle_upload(file: UploadFile) -> JSONResponse:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Executor failed: {e}")
 
-    # 3) Return EXACTLY the JSON array (no wrapper object)
-    return JSONResponse(content=final_answer)
+    # 3) Read & echo the plan, then the JSON array
+    plan_text = PLAN_FILE.read_text(encoding="utf-8")
+    combined = plan_text.strip() + "\n" + json.dumps(final_answer, ensure_ascii=False)
+    return Response(content=combined, media_type="text/plain")
 
 
 @app.post("/api/")
@@ -110,5 +112,3 @@ async def analyze(file: UploadFile = File(...)):
 @app.get("/")
 def root():
     return {"message": "Data Analyst Agent is running. POST /api/ with questions.txt"}
-
-
