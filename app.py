@@ -51,7 +51,7 @@ def plan_with_gemini(task_text: str) -> str:
 
     resp = client.models.generate_content(
         model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash-lite"),
-        contents=[task_text, prompt_text],
+        contents=[prompt_text, task_text],
     )
 
     # 1) Save the plan
@@ -60,7 +60,7 @@ def plan_with_gemini(task_text: str) -> str:
 
     # 2) Immediately read it back and print to logs
     plan_text = PLAN_FILE.read_text(encoding="utf-8")
-    print("💡 Generated plan (outputs/abdul_breaked_task.txt):\n", plan_text)
+    print("💡 Generated plan (outputs/planner_breaked_task.txt):\n", plan_text)
 
     return plan
 
@@ -87,7 +87,7 @@ async def _handle_upload(file: UploadFile) -> JSONResponse:
     if not text.strip():
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
-    # 1) Plan with Gemini → write outputs/abdul_breaked_task.txt (like senior’s repo)
+    # 1) Plan with Gemini → write outputs/planner_breaked_task.txt (like senior’s repo)
     try:
         plan = plan_with_gemini(text)
     except Exception as e:
