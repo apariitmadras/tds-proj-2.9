@@ -1,11 +1,5 @@
 # main.py
 # Executor (ChatGPT/tools): runs plan → scraping → extraction → code execution.
-# Exposes: run_agent_for_api(task: str, plan: str = "") -> list
-#
-# Env vars:
-#   OPENAI_API_KEY   (required)
-#   OPENAI_BASE      (optional, default https://api.openai.com)
-#   EXECUTOR_MODEL   (optional, default gpt-4o-mini)
 
 from __future__ import annotations
 
@@ -14,6 +8,7 @@ import sys
 import json
 import time
 import asyncio
+import logging
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, List
@@ -23,9 +18,14 @@ from bs4 import BeautifulSoup
 from tools.scrape_website import scrape_website
 from tools.get_relevant_data import get_relevant_data
 
+# ---------- Logging setup ----------
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+
 # Paths for runtime artifacts
-down = Path(__file__).parent.resolve()
-ROOT = down
+ROOT = Path(__file__).parent.resolve()
 OUTPUTS = ROOT / "outputs"
 OUTPUTS.mkdir(parents=True, exist_ok=True)
 
@@ -33,23 +33,19 @@ OUTPUTS.mkdir(parents=True, exist_ok=True)
 GPT_RESP_PATH = OUTPUTS / "gpt_response.json"
 TEMP_SCRIPT_PATH = OUTPUTS / "temp_script.py"
 
-# New: system prompt loaded from file
+# System prompt file
 EXECUTOR_PROMPT_FILE = ROOT / "prompts" / "executor.txt"
 
+
 def _load_executor_prompt() -> str:
-    """
-    Load the system prompt for the execution agent from prompts/executor.txt
-    """
     if EXECUTOR_PROMPT_FILE.exists():
         return EXECUTOR_PROMPT_FILE.read_text(encoding="utf-8")
-    # Fallback if missing
     return (
         "You are an execution agent. Use tools to: (1) fetch the target page, "
         "(2) extract the necessary data, (3) when ready, generate complete Python code and call 'answer_questions' with it. "
         "The code MUST print ONLY the final JSON array required by the task. "
         "Do not include explanations—return only the JSON array."
     )
-
 
 def _system_prompt() -> str:
     return _load_executor_prompt()
@@ -61,6 +57,7 @@ async def answer_questions(code: str) -> str:
     Returns stdout (JSON array string).
     """
     TEMP_SCRIPT_PATH.write_text(code, encoding="utf-8")
+    logging.info(f"💻 Running generated code: {TEMP_SCRIPT_PATH.name} (len={len(code)} chars)")
 
     proc = subprocess.run(
         [sys.executable, str(TEMP_SCRIPT_PATH)],
@@ -70,7 +67,11 @@ async def answer_questions(code: str) -> str:
     )
 
     if proc.returncode != 0 and not proc.stdout.strip():
+        logging.error("💥 Generated code failed with no stdout; returning stderr JSON")
+        logging.debug(f"stderr:\n{proc.stderr[:2000]}")
         return json.dumps({"error": "code_failed", "stderr": proc.stderr})
+    if proc.stderr.strip():
+        logging.debug(f"stderr (non-fatal):\n{proc.stderr[:2000]}")
     return proc.stdout
 
 
@@ -136,7 +137,9 @@ def _chat(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     url = f"{base}/v1/chat/completions"
     model = os.getenv("EXECUTOR_MODEL", "gpt-4o-mini")
 
+    t0 = time.time()
     timeout = httpx.Timeout(30.0)
+    logging.info(f"🗣️  OpenAI call model={model} base={base} (timeout={timeout.connect}s)")
     with httpx.Client(timeout=timeout) as client:
         r = client.post(
             url,
@@ -145,12 +148,14 @@ def _chat(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
         )
         r.raise_for_status()
         data = r.json()
+    logging.info(f"🗣️  OpenAI responded in {time.time() - t0:.2f}s")
 
     # save raw response for debugging
     try:
         GPT_RESP_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
+        logging.debug(f"🗂  Saved raw response → {GPT_RESP_PATH}")
+    except Exception as e:
+        logging.debug(f"Could not save raw response: {e}")
 
     return data["choices"][0]["message"]
 
@@ -169,48 +174,74 @@ def _parse_args(raw: Any) -> Dict[str, Any]:
 
 
 async def _call_tool(name: str, args: Dict[str, Any]) -> str:
-    if name == "scrape_website":
-        res = await scrape_website(**args)
-        return json.dumps(res)
-    if name == "get_relevant_data":
-        res = get_relevant_data(**args)
-        return json.dumps(res)
-    if name == "answer_questions":
-        return await answer_questions(**args)
-    return json.dumps({"ok": False, "error": f"Unknown tool '{name}'"})
+    # Truncate logged args if huge (e.g., code strings)
+    def _short(v: Any) -> Any:
+        if isinstance(v, str) and len(v) > 300:
+            return v[:300] + "…(truncated)"
+        return v
+
+    safe_args = {k: _short(v) for k, v in args.items()}
+    t0 = time.time()
+    logging.info(f"🧰 Tool call: {name}({safe_args})")
+
+    try:
+        if name == "scrape_website":
+            res = await scrape_website(**args)
+            out = json.dumps(res)
+        elif name == "get_relevant_data":
+            res = get_relevant_data(**args)
+            out = json.dumps(res)
+        elif name == "answer_questions":
+            out = await answer_questions(**args)
+        else:
+            out = json.dumps({"ok": False, "error": f"Unknown tool '{name}'"})
+        logging.info(f"✅ Tool {name} done in {time.time()-t0:.2f}s")
+        return out
+    except Exception as e:
+        logging.exception(f"❌ Tool {name} failed: {e}")
+        raise
 
 
 async def run_agent_for_api(task: str, plan: str = "") -> list:
+    import uuid as _uuid
+    rid = _uuid.uuid4().hex[:8]
+    logging.info(f"[{rid}] ▶️ Executor start")
+    logging.debug(f"[{rid}] task preview: {task[:400]!r}")
+    logging.debug(f"[{rid}] plan preview: {plan[:1200]!r}")
+
     messages = [
         {"role": "system", "content": _system_prompt()},
         {"role": "user", "content": f"{task}\n\nPlan:\n{plan}\n\nReturn ONLY the JSON array."},
     ]
     start = time.time()
     budget = int(os.getenv("TOOL_LOOP_BUDGET", "110"))
+    iter_no = 0
+
     while True:
         if time.time() - start > budget:
+            logging.error(f"[{rid}] ⏰ Tool loop exceeded time budget ({budget}s)")
             raise TimeoutError("Tool loop exceeded time budget")
 
+        iter_no += 1
+        logging.info(f"[{rid}] 🔁 Iteration {iter_no}: calling model…")
         msg = _chat(messages)
+
         tool_calls = msg.get("tool_calls") or []
         if not tool_calls:
             final_text = (msg.get("content") or "").strip()
-            return json.loads(final_text)
+            logging.info(f"[{rid}] 🧾 Model returned final text; parsing JSON")
+            try:
+                parsed = json.loads(final_text)
+                logging.info(f"[{rid}] ✅ Final JSON parsed successfully")
+                return parsed
+            except Exception as e:
+                logging.exception(f"[{rid}] ❌ Final reply not valid JSON: {e}")
+                raise
 
         # execute requested tools
         messages.append({"role": "assistant", "content": None, "tool_calls": tool_calls})
         for tc in tool_calls:
+            name = tc["function"]["name"]
             args = _parse_args(tc["function"].get("arguments"))
-            out = await _call_tool(tc["function"]["name"], args)
+            out = await _call_tool(name, args)
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": out})
-
-
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="Run the executor locally.")
-    parser.add_argument("task", type=str, help="User task/question")
-    parser.add_argument("--plan", type=str, default=os.getenv("PLAN", ""), help="Optional pre-generated plan")
-    args = parser.parse_args()
-
-    result = asyncio.run(run_agent_for_api(args.task, args.plan))
-    print(json.dumps(result, ensure_ascii=False))
