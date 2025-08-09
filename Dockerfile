@@ -1,23 +1,23 @@
-# Use a slim Python base image
+# --- Dockerfile ---
 FROM python:3.11-slim
 
-# Set work directory
 WORKDIR /app
 
-# Install system dependencies (needed for Playwright and other packages)
+# System deps (keep minimal)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
     curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first to leverage Docker cache
+# Install Python deps first (cache layer)
 COPY requirements.txt .
-
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ✅ Install Playwright Chromium and dependencies
+# Install Playwright browser + libs (needed by tools/scrape_website.py)
 RUN python -m playwright install --with-deps chromium
 
-# Copy the rest of the project files
+# Copy the rest of the app
 COPY . .
+
+# Use Railway's PORT when present; fall back to 8000 locally
+CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000} --log-level info"]
