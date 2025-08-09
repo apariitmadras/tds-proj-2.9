@@ -136,7 +136,7 @@ def _chat(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     url = f"{base}/v1/chat/completions"
     model = os.getenv("EXECUTOR_MODEL", "gpt-4o-mini")
 
-    timeout = httpx.Timeout(165.0)
+    timeout = httpx.Timeout(30.0)
     with httpx.Client(timeout=timeout) as client:
         r = client.post(
             url,
