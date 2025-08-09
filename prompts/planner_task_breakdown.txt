@@ -14,10 +14,10 @@ Absolute Requirements
 - You MUST restate the requested “Response Format” precisely (e.g., “JSON array with 4 items in this order: [<Q1 answer>, <Q2 answer>, ...]”).
 - Prefer a two-step plan for static pages like Wikipedia:
   (1) scrape_website(url="...", output_file="outputs/page.html")
-  (2) answer_questions(code= "...") that opens the SAME literal file path saved in step 1.
-- NEVER assume in-memory variables persist across tools. The Python code in answer_questions must re-open the saved HTML file by its literal path.
+  (2) answer_questions(code="...") that opens the SAME literal file path saved in step 1.
+- NEVER assume in-memory variables persist across tools. The Python code in answer_questions must re-open the saved HTML file by its literal path (string literal).
 - Avoid template placeholders (no $file_name, {{output_file}}, etc.). Use concrete literals in the plan.
-- Prefer BeautifulSoup/pandas/matplotlib. Do NOT require seaborn.
+- Prefer BeautifulSoup/pandas/matplotlib. Do NOT require seaborn. Do NOT use scipy; use numpy (e.g., numpy.polyfit) for regression.
 - For plots, if requested: draw exactly what is asked (e.g., scatter + dotted red regression line), encode as base64 PNG, prefix with "data:image/png;base64,", and keep under 100,000 bytes (reduce DPI if needed).
 
 Your Output FORMAT (MANDATORY)
@@ -34,7 +34,7 @@ Your Output FORMAT (MANDATORY)
     "url": "<absolute URL to source>",
     "output_file": "outputs/<descriptive_file_name>.html",
     "selectors_or_hints": "Optional: CSS like 'main#content table.wikitable', or notes to find correct table/columns",
-    "notes": "Optional clarifications (e.g., numeric parsing rules, units, edge cases)"
+    "notes": "Optional clarifications (e.g., numeric parsing rules, units, edge cases; e.g., strip $, commas, NBSP; treat 'B'/'billion' consistently; if 'Peak' is missing, define a numeric proxy and explain it)"
   },
   "steps": [
     {
@@ -47,7 +47,7 @@ Your Output FORMAT (MANDATORY)
     {
       "tool": "answer_questions",
       "parameters": {
-        "code": "High-level instructions the EXECUTOR must follow when writing code:\n- Open the literal path '<same as variables.output_file>' to read HTML.\n- Parse tables with pandas.read_html(flavor='bs4') or BeautifulSoup.\n- Identify columns robustly (normalize headers to lowercase; match 'rank', 'year', 'worldwide'/'gross', and 'peak' if present; if 'peak' missing, define a numeric proxy explicitly).\n- Compute answers for questions in the EXACT question_order.\n- Build any required plot exactly as specified (e.g., scatter + dotted red regression line), save to BytesIO as PNG, base64-encode with 'data:image/png;base64,' prefix, ensure <100_000 bytes (lower DPI if needed).\n- Print ONLY json.dumps([answer_Q1, answer_Q2, ...]) as the final stdout."
+        "code": "High-level instructions the EXECUTOR must follow when writing code:\\n- Open the literal path '<same as variables.output_file>' to read HTML.\\n- Parse tables with pandas.read_html(..., flavor='lxml'); if that fails, fall back to BeautifulSoup.\\n- Identify columns robustly (normalize headers to lowercase; match 'rank', 'title', 'year', 'worldwide'/'gross', and 'peak' if present; if 'peak' is missing, define a numeric proxy explicitly and document it in code comments).\\n- Convert money fields to numeric USD (strip $, commas, NBSP; interpret 'B'/'billion' as ×1_000_000_000). Parse year as 4-digit int.\\n- Compute answers for questions in the EXACT question_order, preserving order. If a question asks for a TITLE, return the title string (not a year or ID).\\n- Build any required plot exactly as specified (e.g., scatter + dotted red regression line), save to BytesIO as PNG, base64-encode with 'data:image/png;base64,' prefix, ensure <100_000 bytes (lower DPI if needed).\\n- Print ONLY json.dumps([answer_Q1, answer_Q2, ...]) as the final stdout."
       }
     }
   ],
