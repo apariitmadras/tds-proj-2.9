@@ -1,4 +1,3 @@
-# tools/scrape_website.py
 from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Any
@@ -14,7 +13,7 @@ async def scrape_website(
     out = Path(output_file)
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    # Fast path: plain HTTP for static pages (e.g., Wikipedia)
+    # Fast path: Wikipedia is static — try plain HTTP first (usually <1s)
     try:
         with httpx.Client(timeout=20.0, follow_redirects=True) as client:
             r = client.get(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -22,9 +21,9 @@ async def scrape_website(
                 out.write_text(r.text, encoding="utf-8")
                 return {"ok": True, "file": str(out), "url": url, "engine": "httpx"}
     except Exception:
-        pass  # fall back to Playwright
+        pass  # fallback to browser if HTTP path fails
 
-    # Fallback: headless Chromium
+    # Fallback: headless Chromium (slower)
     launch_args = ["--no-sandbox", "--disable-setuid-sandbox"]
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=launch_args)
