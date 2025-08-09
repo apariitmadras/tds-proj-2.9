@@ -68,10 +68,13 @@ async def answer_questions(code: str) -> str:
 
     if proc.returncode != 0 and not proc.stdout.strip():
         logging.error("💥 Generated code failed with no stdout; returning stderr JSON")
-        logging.debug(f"stderr:\n{proc.stderr[:2000]}")
+        # Show stderr in INFO so it always appears in Railway logs
+        logging.info(f"stderr:\n{proc.stderr[:2000]}")
         return json.dumps({"error": "code_failed", "stderr": proc.stderr})
+
     if proc.stderr.strip():
         logging.debug(f"stderr (non-fatal):\n{proc.stderr[:2000]}")
+
     return proc.stdout
 
 
