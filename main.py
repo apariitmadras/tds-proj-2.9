@@ -141,7 +141,7 @@ def _chat(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     model = os.getenv("EXECUTOR_MODEL", "gpt-4o-mini")
 
     t0 = time.time()
-    timeout = httpx.Timeout(30.0)
+    timeout = httpx.Timeout(55.0)
     logging.info(f"🗣️  OpenAI call model={model} base={base} (timeout={timeout.connect}s)")
     with httpx.Client(timeout=timeout) as client:
         r = client.post(
