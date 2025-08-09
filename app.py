@@ -31,8 +31,8 @@ ROOT = Path(__file__).parent.resolve()
 OUTPUTS = ROOT / "outputs"
 OUTPUTS.mkdir(parents=True, exist_ok=True)
 
-PLAN_FILE = OUTPUTS / "abdul_breaked_task.txt"
-PROMPT_FILE = ROOT / "prompts" / "abdul_task_breakdown.txt"
+PLAN_FILE = OUTPUTS / "planner_breaked_task.txt"
+PROMPT_FILE = ROOT / "prompts" / "planner_task_breakdown.txt"
 
 
 
