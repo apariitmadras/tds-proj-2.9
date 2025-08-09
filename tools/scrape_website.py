@@ -1,35 +1,38 @@
 # tools/scrape_website.py
-# Playwright-based scraper (Chromium). Saves page HTML to a file.
-
 from __future__ import annotations
-
 from pathlib import Path
 from typing import Dict, Any
-
+import httpx
 from playwright.async_api import async_playwright
-
 
 async def scrape_website(
     url: str,
     output_file: str = "outputs/scraped_content.html",
     wait_until: str = "domcontentloaded",
-    timeout_ms: int = 60_000,
+    timeout_ms: int = 60000,
 ) -> Dict[str, Any]:
-    """
-    Scrape a URL with headless Chromium and save HTML to output_file.
-    Returns: {"ok": bool, "file": str, "url": str}
-    """
-    launch_args = ["--no-sandbox", "--disable-setuid-sandbox"]
+    out = Path(output_file)
+    out.parent.mkdir(parents=True, exist_ok=True)
 
+    # Fast path: plain HTTP for static pages (e.g., Wikipedia)
+    try:
+        with httpx.Client(timeout=20.0, follow_redirects=True) as client:
+            r = client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code == 200 and len(r.text) > 10000:
+                out.write_text(r.text, encoding="utf-8")
+                return {"ok": True, "file": str(out), "url": url, "engine": "httpx"}
+    except Exception:
+        pass  # fall back to Playwright
+
+    # Fallback: headless Chromium
+    launch_args = ["--no-sandbox", "--disable-setuid-sandbox"]
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=launch_args)
         page = await browser.new_page()
         try:
             await page.goto(url, wait_until=wait_until, timeout=timeout_ms)
             html = await page.content()
-            out = Path(output_file)
-            out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(html, encoding="utf-8")
-            return {"ok": True, "file": str(out), "url": url}
+            return {"ok": True, "file": str(out), "url": url, "engine": "playwright"}
         finally:
             await browser.close()
