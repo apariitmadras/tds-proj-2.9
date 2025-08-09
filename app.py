@@ -43,10 +43,26 @@ PLAN_FILE = OUTPUTS / "planner_breaked_task.txt"
 PROMPT_FILE = ROOT / "prompts" / "planner_task_breakdown.txt"
 
 
+def _log_big(label: str, text: str, chunk: int = 2000, level: int = logging.INFO) -> None:
+    """
+    Log long strings in chunks so platform logs don't truncate them.
+    """
+    if text is None:
+        return
+    n = max(1, (len(text) + chunk - 1) // chunk)
+    logging.log(level, f"{label} (len={len(text)} chars, chunks={n})")
+    for i in range(0, len(text), chunk):
+        logging.log(level, text[i : i + chunk])
+
+
 def _load_planner_prompt() -> str:
-    if PROMPT_FILE.exists():
-        return PROMPT_FILE.read_text(encoding="utf-8")
-    raise RuntimeError(f"Planner prompt missing at: {PROMPT_FILE}")
+    if not PROMPT_FILE.exists():
+        raise RuntimeError(f"Planner prompt missing at: {PROMPT_FILE}")
+    prompt_text = PROMPT_FILE.read_text(encoding="utf-8")
+    # Print the ENTIRE planner prompt to logs
+    _log_big("📄 planner_task_breakdown.txt", prompt_text, level=logging.INFO)
+    return prompt_text
+
 
 def plan_with_gemini(task_text: str) -> str:
     api_key = os.getenv("GEMINI_API_KEY")
@@ -70,10 +86,13 @@ def plan_with_gemini(task_text: str) -> str:
     plan = (resp.text or "").strip()
     PLAN_FILE.write_text(plan, encoding="utf-8")
 
-    # 2) Immediately read it back and print to logs
-    plan_text = PLAN_FILE.read_text(encoding="utf-8")
+    # 2) Read it back and log FULL contents (chunked)
+    try:
+        plan_text = PLAN_FILE.read_text(encoding="utf-8")
+    except Exception:
+        plan_text = plan  # fallback
     logging.info("💡 Generated plan saved at outputs/planner_breaked_task.txt")
-    logging.debug("💡 Plan preview:\n" + plan_text[:2000])
+    _log_big("📄 planner_breaked_task.txt", plan_text, level=logging.INFO)
 
     return plan
 
