@@ -96,7 +96,7 @@ async def _handle_upload(file: UploadFile) -> JSONResponse:
     # 2) Execute with ChatGPT/tools → final JSON array
     try:
         final_answer = await asyncio.wait_for(
-            run_agent_for_api(text, plan), timeout=int(os.getenv("EXECUTOR_TIMEOUT", "170"))
+            run_agent_for_api(text, plan), timeout=int(os.getenv("EXECUTOR_TIMEOUT", "1700"))
         )
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Timed out while executing the plan")
